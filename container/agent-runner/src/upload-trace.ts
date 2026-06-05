@@ -63,29 +63,63 @@ function curl(args: string[], input?: string): { ok: boolean; out: string } {
   return { ok: r.status === 0, out: (r.stdout ?? '') + (r.stderr ?? '') };
 }
 
+/**
+ * Setup instructions for when whoami fails. `body` is the gateway's error
+ * JSON (when the request was proxied through OneCLI). We surface the URL it
+ * hands back — `secret_url` for an unknown host (HF's case), `connect_url`
+ * for an OAuth app, `manage_url` when the secret exists but this agent lacks
+ * access — so the link always points at the right gateway (local or hosted).
+ */
+function notSignedInMessage(body: string): string {
+  let setupUrl: string | undefined;
+  try {
+    const e = JSON.parse(body) as { secret_url?: string; connect_url?: string; manage_url?: string };
+    if (e.secret_url) {
+      // The pre-filled `path` defaults to the failing request path
+      // (/api/whoami-v2); broaden it to /* so the secret covers the upload
+      // endpoints too, not just whoami.
+      setupUrl = e.secret_url.replace(/([?&]path=)[^&]*/, '$1%2F*');
+    } else {
+      setupUrl = e.connect_url ?? e.manage_url;
+    }
+  } catch {
+    /* non-JSON body (e.g. HF's own error, or no gateway) — generic fallback */
+  }
+  const lines = [
+    "Can't upload — no Hugging Face token is available to this agent. To set it up:",
+    '',
+    '1. Create a token with WRITE access at https://huggingface.co/settings/tokens',
+    '   (New token → type "Write" → copy it).',
+    '',
+    setupUrl
+      ? `2. Add it to OneCLI here (host pattern pre-filled): ${setupUrl}`
+      : '2. Add it to the OneCLI vault as a secret with host pattern  huggingface.co',
+    '',
+    'Then run /upload-trace again — no restart needed.',
+  ];
+  return lines.join('\n');
+}
+
 /** Returns a user-facing status line. Never throws. */
 export function uploadTrace(): string {
   const file = newestTranscript();
   if (!file) return 'No transcript to upload for this session yet.';
 
-  const who = curl(['-sf', 'https://huggingface.co/api/whoami-v2']);
-  if (!who.ok) {
-    return [
-      "Can't upload — no Hugging Face token is available to this agent. To set it up:",
-      '',
-      '1. Create a token with WRITE access at https://huggingface.co/settings/tokens',
-      '   (New token → type "Write" → copy it).',
-      '',
-      '2. Add it to the OneCLI vault. Open the dashboard — remotely at https://app.onecli.sh/',
-      '   or on the host at http://127.0.0.1:10254 — then Secrets → New secret,',
-      '   paste the token, and set the host pattern to  huggingface.co',
-      '',
-      'Then run /upload-trace again — no restart needed.',
-    ].join('\n');
+  // whoami, capturing the body + HTTP status (no -f, so the gateway's error
+  // JSON survives a 401). When no token is available the OneCLI gateway
+  // returns a setup URL pre-filled for *this* gateway — so we never hardcode
+  // local-vs-hosted dashboard links, and never have to know which it is.
+  const who = curl(['-s', '-w', '\n%{http_code}', 'https://huggingface.co/api/whoami-v2']);
+  const nl = who.out.lastIndexOf('\n');
+  const body = nl === -1 ? '' : who.out.slice(0, nl);
+  const status = nl === -1 ? who.out.trim() : who.out.slice(nl + 1).trim();
+
+  if (status !== '200') {
+    return notSignedInMessage(body);
   }
   let user: string | undefined;
   try {
-    user = JSON.parse(who.out)?.name;
+    user = JSON.parse(body)?.name;
   } catch {
     /* fall through */
   }
