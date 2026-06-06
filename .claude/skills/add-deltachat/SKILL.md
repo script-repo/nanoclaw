@@ -54,7 +54,7 @@ pnpm run build
 pnpm exec vitest run src/channels/deltachat-registration.test.ts
 ```
 
-Both must be clean before proceeding. `deltachat-registration.test.ts` is the one integration test: it asserts the `import './deltachat.js';` line is present in the channel barrel — the single reach-in that makes the adapter register itself. If that line is missing or drifts, the test goes red. (It checks the barrel structurally rather than importing it, so it stays hermetic and doesn't pull the native `@deltachat/stdio-rpc-server` into the test process; `pnpm run build` is what proves that import resolves and the registration call typechecks.)
+Both must be clean before proceeding. `deltachat-registration.test.ts` is the one integration test: it imports the real channel barrel and asserts the registry contains `deltachat`. It goes red if the `import './deltachat.js';` line is deleted or drifts, if the barrel fails to evaluate (so the channel genuinely would not register), or if `@deltachat/stdio-rpc-server` isn't installed (the import throws) — so it also implicitly verifies the dependency from step 4. Importing is safe: deltachat instantiates the rpc client only in `setup()` (at host startup), never at import.
 
 End-to-end message delivery against a real email account is verified manually once the service is running — see Wiring and Troubleshooting.
 

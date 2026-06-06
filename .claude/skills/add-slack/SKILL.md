@@ -56,7 +56,7 @@ pnpm run build
 pnpm exec vitest run src/channels/slack-registration.test.ts
 ```
 
-Both must be clean before proceeding. `slack-registration.test.ts` is the one integration test: it asserts the `import './slack.js';` line is present in the channel barrel — the single reach-in that makes the adapter register itself. If that line is missing or drifts, the test goes red. (It checks the barrel structurally rather than importing it, so it stays hermetic and doesn't pull `@chat-adapter/slack` into the test process. The adapter also calls core's `createChatSdkBridge(...)`; that typed core-API consumption is guarded by `pnpm run build`.)
+Both must be clean before proceeding. `slack-registration.test.ts` is the one integration test: it imports the real channel barrel and asserts the registry contains `slack`. It goes red if the `import './slack.js';` line is deleted or drifts, if the barrel fails to evaluate, or if `@chat-adapter/slack` isn't installed (the import throws) — so it also implicitly verifies the dependency from step 4. The adapter also calls core's `createChatSdkBridge(...)`; that typed core-API consumption is guarded by `pnpm run build`.
 
 End-to-end message delivery against a real Slack workspace is verified manually once the service is running — see Next Steps and the webhook setup above.
 
