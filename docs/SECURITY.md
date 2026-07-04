@@ -22,7 +22,7 @@ Agents execute in containers (Docker), providing:
 - **Process isolation** — container processes cannot affect the host
 - **Filesystem isolation** — only explicitly mounted directories are visible
 - **Non-root execution** — runs as an unprivileged user (`node`, uid 1000, or the host uid remapped in)
-- **Per-session containers** — one long-lived container per session polls that session's DBs and handles many messages, then is torn down (`--rm`) when the session goes idle. Nothing persists on disk after exit except the two session DBs.
+- **Per-session containers** — one long-lived container per session polls that session's DBs and handles many messages, then is torn down (`--rm`) when the session goes idle.
 
 This is the primary security boundary. Rather than relying on application-level
 permission checks, the attack surface is limited by what's mounted.
