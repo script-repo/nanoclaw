@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanoclaw
+  namespace: nanoclaw
+  labels:
+    app: nanoclaw
+spec:
+  replicas: 1
+  # Never run two hosts against the same PVC. Recreate tears the old pod down
+  # before starting the new one (no rolling overlap on a RWO volume).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nanoclaw
+  template:
+    metadata:
+      labels:
+        app: nanoclaw
+    spec:
+      # The RWO PVC still pins *scheduling* to whichever node the volume
+      # attaches to, but the GHCR image is pullable anywhere so no nodeSelector
+      # is needed.
+
+      # Seed the PVC with the repo (code + node_modules + dist) on first start,
+      # then normalize ownership so the host process (uid 1000) can write.
+      initContainers:
+        - name: seed
+          image: ghcr.io/script-repo/nanoclaw-host:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              if [ ! -f /data/nanoclaw/package.json ]; then
+                echo "Seeding repo onto PVC..."
+                cp -a /opt/nanoclaw-src/. /data/nanoclaw/
+              else
+                echo "PVC already seeded; leaving app state intact."
+              fi
+              mkdir -p /data/nanoclaw/home /data/nanoclaw/data \
+                       /data/nanoclaw/groups /data/nanoclaw/store
+              chown -R 1000:1000 /data/nanoclaw
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data/nanoclaw
+              subPath: app
+
+      containers:
+        # NanoClaw host process (the Docker orchestrator).
+        - name: host
+          image: ghcr.io/script-repo/nanoclaw-host:latest
+          imagePullPolicy: Always
+          workingDir: /data/nanoclaw
+          # Wait for the DinD daemon, then exec the built host. cwd is the PVC
+          # copy, so PROJECT_ROOT (process.cwd()) resolves to /data/nanoclaw and
+          # every bind-mount source lives on the shared volume.
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for DinD daemon on $DOCKER_HOST ..."
+              until docker info >/dev/null 2>&1; do sleep 2; done
+              echo "DinD reachable. Starting NanoClaw host."
+              exec node dist/index.js
+          env:
+            - name: DOCKER_HOST
+              value: tcp://127.0.0.1:2375
+            - name: HOME
+              value: /data/nanoclaw/home
+          envFrom:
+            - secretRef:
+                name: nanoclaw-env
+          securityContext:
+            # uid 1000 == the image's `node` user. container-runner.ts only adds
+            # `--user` to spawned agents when the host uid is neither 0 nor 1000,
+            # so running as 1000 keeps agent containers on their image default.
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data/nanoclaw
+              subPath: app
+
+        # Docker-in-Docker sidecar: runs the agent containers the host spawns.
+        - name: dind
+          image: docker:27-dind
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            # Empty cert dir => daemon listens on plaintext tcp://0.0.0.0:2375,
+            # reachable by the host container over the shared pod localhost.
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          volumeMounts:
+            # CRITICAL: mounted at the SAME path as the host container so that
+            # `docker run -v /data/nanoclaw/...:...` bind mounts resolve on the
+            # daemon's own filesystem.
+            - name: data
+              mountPath: /data/nanoclaw
+              subPath: app
+            # Docker's own storage (built agent image + layers) persists across
+            # restarts on its own PVC subPath.
+            - name: data
+              mountPath: /var/lib/docker
+              subPath: dind
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: nanoclaw-data

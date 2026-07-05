@@ -1,0 +1,60 @@
+name: Build & push NanoClaw host image
+
+# Builds the Kubernetes host image (deploy/Dockerfile.host) and pushes it to
+# GHCR. Runs in GitHub's cloud, so no local Docker is required.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'container/**'
+      - 'bin/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'deploy/Dockerfile.host'
+      - '.github/workflows/build-host-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # -> ghcr.io/script-repo/nanoclaw-host
+          images: ghcr.io/${{ github.repository_owner }}/nanoclaw-host
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build & push (linux/amd64 — matches the cankp-primary nodes)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.host
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

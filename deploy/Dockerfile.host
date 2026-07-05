@@ -1,0 +1,44 @@
+# NanoClaw host image.
+#
+# Runs the NanoClaw host process (the Docker orchestrator described in
+# src/container-runner.ts). It needs:
+#   - Node.js 22 + pnpm (to run the built host in dist/)
+#   - the docker CLI (talks to the DinD sidecar over DOCKER_HOST)
+#   - the full repo with deps installed + built, baked in at /opt/nanoclaw-src
+#
+# The same image is used for the seed initContainer (copies /opt/nanoclaw-src
+# onto the PVC) and the main host container (runs from the PVC copy). Deps are
+# installed at build time so the pod never needs registry access at runtime.
+#
+# Build from the repo root so the whole repo is the build context:
+#   docker build -f deploy/Dockerfile.host -t nanoclaw-host:local .
+FROM node:22-bookworm
+
+# Skip husky git hooks during install (no .git in the image, CI-style build).
+ENV HUSKY=0
+
+# docker CLI (client only; the daemon is the DinD sidecar).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# pnpm via corepack, pinned to the version in package.json's packageManager field.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+WORKDIR /opt/nanoclaw-src
+COPY . /opt/nanoclaw-src
+
+# Install (incl. dev deps so `pnpm setup`/tsx work via exec) and build dist/.
+# node:22-bookworm (full) already ships gcc/g++/make/python3, so the
+# better-sqlite3 native build succeeds.
+RUN pnpm install --frozen-lockfile && pnpm build
+
+# Default command is overridden by the k8s manifests (seed vs run).
+CMD ["node", "dist/index.js"]

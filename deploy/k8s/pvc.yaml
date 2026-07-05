@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nanoclaw-data
+  namespace: nanoclaw
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # Default Nutanix CSI block storage (RWO, WaitForFirstConsumer, expandable).
+  storageClassName: nutanix-volume
+  resources:
+    requests:
+      storage: 20Gi
