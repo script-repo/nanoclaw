@@ -76,6 +76,8 @@ spec:
           env:
             - name: DOCKER_HOST
               value: tcp://127.0.0.1:2375
+            - name: DOCKER_BUILDKIT
+              value: "1"
             - name: HOME
               value: /data/nanoclaw/home
           envFrom:
