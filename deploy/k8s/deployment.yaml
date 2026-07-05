@@ -42,6 +42,12 @@ spec:
               fi
               mkdir -p /data/nanoclaw/home /data/nanoclaw/data \
                        /data/nanoclaw/groups /data/nanoclaw/store
+              # Stamp the upgrade marker to the code version shipped in this
+              # image so the host's startup tripwire passes. We deploy via
+              # immutable images, not `git pull`, so aligning the marker with
+              # the image on every (re)seed is correct.
+              cd /data/nanoclaw && HOME=/data/nanoclaw/home \
+                ./node_modules/.bin/tsx scripts/upgrade-state.ts set '' k8s-seed
               chown -R 1000:1000 /data/nanoclaw
           securityContext:
             runAsUser: 0
